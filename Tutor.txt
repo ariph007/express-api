@@ -1,0 +1,214 @@
+//? Buat Project Express baru
+#npx new-express-app
+
+//? Jalankan server express
+#npm start
+
+//? Install dependencies
+#npm i mysql2 knex bcryptjs jsonwebtoken
+
+//? Buat Migration
+    //* Buat folder models di /src
+#mkdir models
+#cd models
+
+    //* Buat knex file
+#knex init
+
+    //* Edit knexfile.js lalu comment staging dan production karena kita saat ini hanya
+    //* melakukan development, ubah development sesuai koneksi db dan buat nama migration 
+development: {
+    client: 'mysql2',
+    connection: {
+      host: 'localhost',
+      port: '3307',
+      user: 'root',
+      password: 'toor',
+      database: 'blog'
+    },
+    migrations: 'blog-migrations'
+  },
+
+    //* Buat migration table user (masih dalam folder models)
+#knex migrate:make table-user
+
+    //* Buat migration table post (masih dalam folder models).
+#knex migrate:make table-post
+
+    //* Lalu buat table user dan column table user pada migration table user yang telah dibuat.
+    exports.up = function(knex) {
+        return knex.schema.createTable('user', table =>{
+            table.increments('id').primary()
+            table.string('firstName')
+            table.string('lastname')
+            table.string('username')
+            table.string('email')
+            table.string('password')
+            table.timestamps()
+        })
+      };
+
+    //* Buat function untuk drop table users
+    exports.down = function(knex) {
+        return knex.schema.dropTable('users')
+      };
+
+    //* Lalu buat table post dan column table post pada migration table post yang telah dibuat.
+    exports.up = function(knex) {
+        return knex.schema.createTable('posts', table =>{
+            table.increments('id').primary()
+            table.string('title')
+            table.text('body', 'longtext')
+            table.integer('user_id').unsigned().references('id').inTable('users')
+            table.timestamps()
+        })
+      };
+
+      //* Buat function untuk drop table posts
+      exports.down = function(knex) {
+        return knex.schema.dropTable('posts')
+      };
+
+      //* Tambahkan script di package.json untuk migrate
+      "migrate": "knex migrate:latest --knexfile src/models/knexfile.js",
+      "migrate:down": "knex migrate:down --knexfile src/models/knexfile.js"
+
+      //* Jalankan migrate untuk membuat table dan column(masih dalam folder models)
+      #npm run migrate
+
+//? Selanjutnya buat module knex
+#touch knex.js
+
+    //* Definisikan koneksi knex kita di file .env, di bawah SERVER_PORT
+NODE_ENV=development
+
+    //* Buka knex.js lalu tambahkan
+//knexConfig untuk mengambil konfig knex yang telah kita buat
+const knexConfig = require('./knexfile')
+/* var knex akan mengambil inti knex, lalu memanggil knexConfig dan memanggil NODE_ENV
+    yang telah ditambahkan di file .env, jika NODE_ENV tidak ditemukan dalam file .env
+    maka akan menggunakan 'development */
+const knex = require('knex')(knexConfig[process.env.NODE_ENV || 'development'])
+//export knex agar dapat digunakan di file lain
+module.exports = knex;
+
+//? Buat file userController pada folder controller
+
+
+//? Buat file userRoutes pada folder routes
+      //* Isi file userRoutes
+      const express = require('express')
+      const userController = require('../controllers/userController')
+      const router = express.Router()
+      
+      router.post('/register', userController.register)
+      
+      module.exports = router
+
+//? Pada index.js definisikan userRouter dan masukkan endpoint user agar ketika di hit mengarah ke userRoute
+const userRouter = require('./routes/userRoutes')
+app.use('/user', userRouter)
+
+
+//? Comment endpoint / di index.js
+// app.use('/', router);
+
+//? Tambahkan endpoint login di userRoutes
+router.post('/login', userController.login)
+
+//? Tambahkan jwt key di .env 
+JWT_KEY=rahasia
+
+//? Isi userController
+const knex = require('../models/knex');
+const bcrypt = require('bcryptjs')
+const jwt = require('jsonwebtoken')
+
+exports.register = async(req, res) => {
+    try {
+        //* Request body dimasukkan dalam object
+        const {firstName, lastName, username, email, password} = req.body
+
+        //* Check field apakah ada yang kosong ? kala ada kasih pesan
+        if(firstName && lastName && username && email && password === ""){
+            return res.status(400).send({
+                message: 'field should not be empty'
+            })
+        }
+        
+        //* Field password dari user di encrypt
+        const hashedPassword = bcrypt.hashSync(password, 8)
+       
+        //* Masukkan data dari field yang telah diisi oleh user ke database menggunakan knex
+        let insertData = await knex('users').insert({
+            firstName: firstName,
+            lastName: lastName,
+            username: username,
+            email: email,
+            password: hashedPassword
+        }).then(insertedId => {
+            return insertedId
+        })
+
+        const token = jwt.sign({
+            id: insertData[0]
+        }, process.env.JWT_KEY, {expiresIn: 3600})
+
+        //* Beri status success ketika tidak ada eror
+        return res.status(200).send({
+            message: 'register success',
+            data: insertData, 
+            token: token
+        })
+
+        //* Kalau ada eror ketika insert ke database, beri pesan eror
+    } catch (error) {
+        res.status(500).send({
+            code: 500,
+            status: false,
+            message: error.message,
+            data: null
+        })
+    }
+}
+
+//* buat endpoint login
+exports.login = async(req, res) =>{
+    //* Jika tidak ada eror, select * from table user where username = req.body.username
+    try {
+        let getData = await knex('users').where({
+            username: req.body.username
+        }).select('*')
+
+    //* Cek apakah password valid ? caranya compare req.body.password && getData[0].password
+        const isPasswordValid = bcrypt.compareSync(req.body.password, getData[0].password)
+
+    //* Jika password tidak valid, maka kembalikan pesan 'password invalid
+        if(!isPasswordValid){
+            return res.status(400).send({
+                message: 'password invalid'
+            })
+        }
+    
+    //* buat token login
+        const token = jwt.sign({
+            id:getData[0].id
+        }, process.env.JWT_KEY, {expiresIn: 3600})
+    
+    //* jika password bener, kembalikan pesan 'login succesfull', data dan token
+        return res.status(200).send({
+            message: 'login succesfull',
+            data : getData,
+            token: token
+        })
+    
+    // Jika ada eror selain password salah(kesalahan server), kembalikan pesan error.message
+    } catch (error) {
+        res.status(500).send({
+            code: 500,
+            status: false,
+            message: error.message,
+            data: null
+        })
+    }
+}
